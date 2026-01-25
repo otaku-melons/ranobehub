@@ -1,3 +1,0 @@
-BeautifulSoup4
-dublib==0.6.1
-lxml
