@@ -3,5 +3,5 @@
 	"site": "ranobehub.org",
 	"content_type": "ranobe",
 	"version": "$last_git_tag",
-	"melon_required_version": null
+	"melon_required_version": ">1.0.0-rc.1"
 }
