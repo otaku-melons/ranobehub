@@ -10,6 +10,7 @@ from dublib.Polyglot import HTML
 from dataclasses import dataclass
 from datetime import datetime
 from time import sleep
+import re
 
 from bs4 import BeautifulSoup, Tag
 
@@ -82,6 +83,64 @@ class Parser(RanobeParser):
 		
 		for Block in DataBlocks:
 			if header in str(Block): return Block.get_text().strip()[len(header):].strip()
+
+	def __GetFootnotes(self, container: Tag) -> dict[str, Footnote]:
+		"""
+		Возвращает словарь заметок.
+
+		:param container: Контейнер контента главы.
+		:type container: Tag
+		:return: Словарь, в котором ключ – ID заметки на сайте, а значение – сама заметка.
+		:rtype: dict[str, Footnote]
+		"""
+
+		FootnotesDict = dict()
+		ReferencesList: list[Tag] = list()
+
+		#---> В некоторых главах несколько списков сновок.
+		#==========================================================================================#
+		References = container.find_all("ol")
+		if not References: return FootnotesDict
+
+		for Reference in References:
+			Buffer = Reference.find_all("li")
+
+			if Buffer: 
+				for CurrentBufferElement in Buffer: ReferencesList.append(CurrentBufferElement)
+
+		#---> Получение содержимого заметки для каждого элемента списка.
+		#==========================================================================================#
+		for Reference in ReferencesList:
+			ReferenceID = Reference.attrs.get("id")
+			if not ReferenceID: self._Portals.warning("Reference hasn't ID. Skipped.")
+			Reference.find("a").decompose()
+
+			ParagraphObject = Paragraph(self._SystemObjects)
+			ParagraphObject.set_text(Reference.get_text())
+			FootnoteObject = Footnote(self._SystemObjects)
+			FootnoteObject.add_element(ParagraphObject)
+			FootnotesDict[ReferenceID] = FootnoteObject
+
+		return FootnotesDict
+
+	def __SplitParagraphsByBreaks(self, soup: BeautifulSoup, paragraph: Tag) -> tuple[Tag]:
+		"""
+		Разбивает абзацы по вхождению тега `br`.
+
+		:param paragraph: Разбиваемый абзац.
+		:type paragraph: Tag
+		:param soup: Парсер страницы.
+		:type soup: BeautifulSoup
+		:return: Последовательность абзацев.
+		:rtype: tuple[Tag]
+		"""
+
+		if not paragraph.find("br"): return (paragraph,)
+
+		Text = paragraph.decode_contents()
+		Parts = tuple(Line.strip() for Line in re.split(r"<br\s*/?>", Text) if Line.strip())
+
+		return tuple(soup.new_tag("p", string = Part, attrs = paragraph.attrs.copy()) for Part in Parts)
 
 	def __UnwrapInnerTags(self, tag: Tag) -> Tag:
 		"""
@@ -364,45 +423,6 @@ class Parser(RanobeParser):
 		Description = Description.strip("\n")
 		self._Title.set_description(Description)
 
-	def __GetFootnotes(self, container: Tag) -> dict[str, Footnote]:
-		"""
-		Возвращает словарь заметок.
-
-		:param container: Контейнер контента главы.
-		:type container: Tag
-		:return: Словарь, в котором ключ – ID заметки на сайте, а значение – сама заметка.
-		:rtype: dict[str, Footnote]
-		"""
-
-		FootnotesDict = dict()
-		ReferencesList: list[Tag] = list()
-
-		#---> В некоторых главах несколько списков сновок.
-		#==========================================================================================#
-		References = container.find_all("ol")
-		if not References: return FootnotesDict
-
-		for Reference in References:
-			Buffer = Reference.find_all("li")
-
-			if Buffer: 
-				for CurrentBufferElement in Buffer: ReferencesList.append(CurrentBufferElement)
-
-		#---> Получение содержимого заметки для каждого элемента списка.
-		#==========================================================================================#
-		for Reference in ReferencesList:
-			ReferenceID = Reference.attrs.get("id")
-			if not ReferenceID: self._Portals.warning("Reference hasn't ID. Skipped.")
-			Reference.find("a").decompose()
-
-			ParagraphObject = Paragraph(self._SystemObjects)
-			ParagraphObject.set_text(Reference.get_text())
-			FootnoteObject = Footnote(self._SystemObjects)
-			FootnoteObject.add_element(ParagraphObject)
-			FootnotesDict[ReferenceID] = FootnoteObject
-
-		return FootnotesDict
-
 	def __GetGenres(self, soup: BeautifulSoup):
 		"""
 		Получает жанры тайтла.
@@ -539,7 +559,15 @@ class Parser(RanobeParser):
 			Element = None
 
 			match CurrentTag.name:
-				case "p": Element = self.__CreateParagraphElementFromTag(CurrentTag, FootnotesDict)
+
+				case "p":
+					for CurrentParagraph in self.__SplitParagraphsByBreaks(Soup, CurrentTag):
+						Element = self.__CreateParagraphElementFromTag(CurrentParagraph, FootnotesDict)
+
+						if Element:
+							chapter.add_element(Element)
+							Element = None
+
 				case "h3": Element = self.__CreateHeaderElementFromTag(CurrentTag, FootnotesDict)
 				case "img": Element = self.__CreateImageElementFromTag(CurrentTag, chapter)
 				case "blockquote": Element = self.__CreateBlockquoteElementFromTag(CurrentTag, chapter, FootnotesDict)
