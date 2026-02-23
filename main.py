@@ -57,33 +57,6 @@ class Parser(RanobeParser):
 
 		return FootnotesSearchResult(text, Footnotes)
 
-	def __GetDataBlockContent(self, soup: BeautifulSoup, header: str) -> str | None:
-		"""
-		Получает содержимое блока данных.
-
-		:param soup: Страница тайтла.
-		:type soup: BeautifulSoup
-		:param header: Ключевая строка для идентификации блока.
-		:type header: str
-		:return: Содержимое искомого блока данных.
-		:rtype: str | None
-		"""
-
-		DataContainer = soup.find("div", {"id": "section-common"})
-
-		if not DataContainer:
-			self._Portals.warning(f"Data container not found.")
-			return
-		
-		DataBlocks = DataContainer.find_all("div", {"class": "book-meta-row"})
-
-		if not DataBlocks:
-			self._Portals.warning(f"No data block for header: \"{header}\".")
-			return
-		
-		for Block in DataBlocks:
-			if header in str(Block): return Block.get_text().strip()[len(header):].strip()
-
 	def __GetFootnotes(self, container: Tag) -> dict[str, Footnote]:
 		"""
 		Возвращает словарь заметок.
@@ -351,19 +324,6 @@ class Parser(RanobeParser):
 	# >>>>> ПРИВАТНЫЕ МЕТОДЫ ПАРСИНГА СТРАНИЦЫ ТАЙТЛА <<<<< #
 	#==========================================================================================#
 
-	def __GetAuthor(self, soup: BeautifulSoup):
-		"""
-		Получает автора.
-
-		:param soup: Страница тайтла.
-		:type soup: BeautifulSoup
-		"""
-		AuthorContainer = soup.find("div", {"class": "book-author"})
-
-		if AuthorContainer:
-			Author = AuthorContainer.get_text().replace("(Автор)", "").strip().split("\n")[0]
-			self._Title.add_author(Author)
-
 	def __GetBranch(self):
 		"""Получает данные глав."""
 
@@ -388,106 +348,85 @@ class Parser(RanobeParser):
 
 		self._Title.add_branch(CurrentBranch)
 
-	def __GetCovers(self, soup: BeautifulSoup):
+	def __GetCovers(self, data: dict):
 		"""
 		Получает ссылки на обложки.
 
-		:param soup: Страница тайтла.
-		:type soup: BeautifulSoup
+		:param data: Словарь данных тайтла.
+		:type data: dict
 		"""
 
-		CoversBlocks = soup.find("div", {"class": "sticky"}).find("div", {"class": "poster-slider"}).find_all("img")
-		
-		for Block in CoversBlocks:
-			Link = Block["data-src"]
-			# Исключает заглушку.
+		Posters: dict[str, str] = data["posters"]
+		del Posters["color"]
+
+		for Link in Posters.values():
 			if not Link.endswith("default.jpg"): self._Title.add_cover(Link)
 
-	def __GetDescription(self, soup: BeautifulSoup):
+	def __GetDescription(self, data: dict):
 		"""
 		Получает описание тайтла.
 
-		:param soup: Страница тайтла.
-		:type soup: BeautifulSoup
+		:param data: Словарь данных тайтла.
+		:type data: dict
 		"""
 
-		DescriptionBlock = soup.find("div", {"class": "book-description"})
-		Description = None
-		
-		if DescriptionBlock:
-			Paragraphs = DescriptionBlock.find_all("p")
-			Description = ""
-			for p in Paragraphs: Description += HTML(p.get_text()).plain_text.strip() + "\n"
-				
-		Description = RemoveRecurringSubstrings(Description, "\n")
-		Description = Description.strip("\n")
-		self._Title.set_description(Description)
+		DescriptionParagraphs = BeautifulSoup(data["description"], "html.parser").find_all("p")
+		Description: list[str] = list()
 
-	def __GetGenres(self, soup: BeautifulSoup):
-		"""
-		Получает жанры тайтла.
+		for Paragraph in DescriptionParagraphs:
+			Paragraph = Paragraph.decode_contents()
+			Paragraph = HTML(Paragraph).plain_text.strip()
+			Description.append(Paragraph)
 
-		:param soup: Страница тайтла.
-		:type soup: BeautifulSoup
-		"""
+		self._Title.set_description("\n".join(Description))
 
-		Genres = self.__GetDataBlockContent(soup, "Жанр")
-
-		if Genres:
-			Genres = Genres.split()
-			Genres = tuple(Genre for Genre in Genres if Genre)
-			self._Title.set_genres(Genres)
-
-	def __GetNames(self, soup: BeautifulSoup):
+	def __GetNames(self, soup: BeautifulSoup, data: dict):
 		"""
 		Парсит названия тайтла.
 
-		:param soup: Страница тайтла.
+		:param soup: Парсер HTML-секции данных тайтла.
 		:type soup: BeautifulSoup
+		:param data: Словарь данных тайтла.
+		:type data: dict
 		"""
 
-		self._Title.set_localized_name(soup.find("h1").get_text())
-		AnotherNames = soup.find("h2").get_text().split(" / ")
-		self._Title.set_eng_name(AnotherNames[0])
-		if len(AnotherNames) > 1: self._Title.set_another_names(AnotherNames[1:])
+		self._Title.set_localized_name(data["names"]["rus"])
+		self._Title.set_eng_name(data["names"]["eng"])
+		
+		AnotherNames = soup.find("a", {"class": "ui header tiny grey"})
+
+		if AnotherNames:
+			AnotherNames = AnotherNames.get_text().split(" / ")
+			AnotherNames = tuple(Name.strip() for Name in AnotherNames)
+			self._Title.set_another_names(AnotherNames)
 
 	def __GetOriginalLanguage(self, soup: BeautifulSoup):
 		"""
 		Определяет код языка оригинального контента по стандарту ISO 639-1.
 
-		:param soup: Страница тайтла.
+		:param soup: Парсер HTML-секции данных тайтла.
 		:type soup: BeautifulSoup
 		"""
 
 		LanguagesDeterminations = {
-			"Китай": "zho",
-			"Корея": "kor",
-			"Япония": "jpn",
-			"США": "eng"
+			"china": "zho",
+			"kr": "kor",
+			"japan": "jpn",
+			"us": "eng"
 		}
-		
-		Country = self.__GetDataBlockContent(soup, "Страна")
-		if Country in LanguagesDeterminations: self._Title.set_original_language(LanguagesDeterminations[Country])
 
-	def __GetPublicationYear(self, soup: BeautifulSoup):
-		"""
-		Получает год публикации тайтла.
+		Flag = soup.find("i")
 
-		:param soup: Страница тайтла.
-		:type soup: BeautifulSoup
-		"""
+		if Flag:
+			CountryCode = Flag.attrs["class"][0]
+			self._Title.set_original_language(LanguagesDeterminations[CountryCode])
 
-		Year = self.__GetDataBlockContent(soup, "Год выпуска")
-		if not Year: return
-		if Year.isdigit(): self._Title.set_publication_year(int(Year))
-		else: self._Portals.warning("Failed to get publication year.")
-
-	def __GetStatus(self, soup: BeautifulSoup):
+	def __GetStatus(self, data: dict):
 		"""
 		Определяет статус тайтла.
 
-		:param soup: _description_
-		:type soup: BeautifulSoup
+		:param data: Словарь данных тайтла.
+		:type data: dict
 		"""
 
 		StatusesDeterminations = {
@@ -496,33 +435,29 @@ class Parser(RanobeParser):
 			"Завершено": Statuses.completed
 		}
 
-		Status = self.__GetDataBlockContent(soup, "Статус перевода")
-		if Status in StatusesDeterminations: self._Title.set_status(StatusesDeterminations[Status])
+		self._Title.set_status(StatusesDeterminations[data["status"]["title"]])
 
-	def __GetTagsAngAgeLimit(self, soup: BeautifulSoup):
+	def __GetTagsAngAgeLimit(self, data: dict):
 		"""
 		Получает теги тайтла и определяет возрастной рейтинг.
 
-		:param soup: Страница тайтла.
-		:type soup: BeautifulSoup
+		:param data: Словарь данных тайтла.
+		:type data: dict
 		"""
 
 		Tags = list()
-
-		DataContainer = soup.find_all("div", {"class": "book-tags"})[-1]
-		DataSpoiler = DataContainer.find("div", {"class": "__spoiler_new display-none"})
-		DataBlocks = DataSpoiler.find_all("a") if DataSpoiler else DataContainer.find_all("a")
-		for Block in DataBlocks: Tags.append(Block.get_text().strip())
+		for Tag in data["tags"]["events"]: Tags.append(Tag["title"])
 		
 		Ratings = {
-			"R-15 (Японское возрастное ограничение)": 15,
-			"18+": 18
+			"18+": 18,
+			"R-15 (Японское возрастное ограничение)": 15
 		}
 
 		for Rating, AgeLimit in Ratings.items():
 			if Rating in Tags:
 				if self._Settings.common.pretty: Tags.remove(Rating)
 				self._Title.set_age_limit(AgeLimit)
+				break
 
 		self._Title.set_tags(Tags)
 
@@ -595,20 +530,21 @@ class Parser(RanobeParser):
 	def parse(self):
 		"""Получает основные данные тайтла."""
 
-		Response = self._Requestor.get(f"https://{self._Manifest.site}/ranobe/{self._Title.slug}")
-		if not Response.ok: self._Portals.request_error(Response, "Unable load title page.")
-
 		self._Title.set_id(int(self._Title.slug.split("-")[0]))
 		self._Title.set_content_language("rus")
 
-		Soup = BeautifulSoup(Response.text, "html.parser")
-		self.__GetNames(Soup)
-		self.__GetCovers(Soup)
-		self.__GetAuthor(Soup)
-		self.__GetPublicationYear(Soup)
-		self.__GetDescription(Soup)
+		Response = self._Requestor.get(f"https://ranobehub.org/api/ranobe/{self._Title.id}")
+		if not Response.ok: self._Portals.request_error(Response, "Unable request title data.")
+		Data = Response.json["data"]
+		Soup = BeautifulSoup(Data["html"], "html.parser")
+
+		self.__GetNames(Soup, Data)
+		self.__GetCovers(Data)
+		for AuthorData in Data["authors"]: self._Title.add_author(AuthorData["name_eng"])
+		self._Title.set_publication_year(Data["year"])
+		self.__GetDescription(Data)
 		self.__GetOriginalLanguage(Soup)
-		self.__GetStatus(Soup)
-		self.__GetGenres(Soup)
-		self.__GetTagsAngAgeLimit(Soup)
+		self.__GetStatus(Data)
+		for Genre in Data["tags"]["genres"]: self._Title.add_genre(Genre["title"])
+		self.__GetTagsAngAgeLimit(Data)
 		self.__GetBranch()
