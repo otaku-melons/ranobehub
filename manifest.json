@@ -1,7 +1,8 @@
 {
 	"object": "parser",
 	"site": "ranobehub.org",
-	"content_type": "ranobe",
+	"content_types": ["ranobe"],
+	"parent": null,
 	"version": "$last_git_tag",
 	"melon_required_version": ">1.0.0-rc.1"
 }
