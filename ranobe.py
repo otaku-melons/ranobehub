@@ -1,13 +1,13 @@
 from Source.Core.Base.Formats.Ranobe.Elements import Blockquote, Footnote, Header, Image, Paragraph
-from Source.Core.Base.Formats.Ranobe.ChapterHeaderParser import ChapterHeaderParser
+from Source.Core.Base.Parsers.Components.ChapterHeaderParser.Ranobe import ChapterHeaderParser
 from Source.Core.Base.Formats.BaseFormat import Cover, Statuses
 from Source.Core.Base.Parsers.RanobeParser import RanobeParser
 from Source.Core.Base.Formats.Ranobe import Branch, Chapter
+from Source.Core.Base.Parsers.Components import Functions
 
 from dublib.Polyglot import HTML
 
 from dataclasses import dataclass
-import re
 
 from bs4 import BeautifulSoup, Tag
 
@@ -107,44 +107,6 @@ class Parser(RanobeParser):
 			FootnotesDict[ReferenceID] = FootnoteObject
 
 		return FootnotesDict
-
-	def __SplitParagraphsByBreaks(self, soup: BeautifulSoup, paragraph: Tag) -> tuple[Tag]:
-		"""
-		Разбивает абзацы по вхождению тега `br`.
-
-		:param paragraph: Разбиваемый абзац.
-		:type paragraph: Tag
-		:param soup: Парсер страницы.
-		:type soup: BeautifulSoup
-		:return: Последовательность абзацев.
-		:rtype: tuple[Tag]
-		"""
-
-		if not paragraph.find("br"): return (paragraph,)
-
-		Text = paragraph.decode_contents()
-		Parts = tuple(Line.strip() for Line in re.split(r"<br\s*/?>", Text) if Line.strip())
-
-		return tuple(soup.new_tag("p", string = Part, attrs = paragraph.attrs.copy()) for Part in Parts)
-
-	def __UnwrapInnerTags(self, tag: Tag) -> Tag:
-		"""
-		Если передан тег абзаца, содержащий блок текста или изображение, разворачивает абзац.
-
-		:param tag: Обрабатываемый тег.
-		:type tag: Tag
-		:return: Обрабатываемый тег или вложенный тег блока текста или изображения.
-		:rtype: Tag
-		"""
-
-		if tag.name == "p":
-			for InnerTagName in ("blockquote", "img", "h3"):
-				InnerTag = tag.find(InnerTagName)
-				if InnerTag:
-					tag = InnerTag
-					break
-
-		return tag
 
 	#==========================================================================================#
 	# >>>>> ПРИВАТНЫЕ МЕТОДЫ СОЗДАНИЯ ЭЛЕМЕНТОВ ГЛАВ <<<<< #
@@ -429,13 +391,13 @@ class Parser(RanobeParser):
 
 		FootnotesDict = self.__GetFootnotes(Container)
 		for CurrentTag in Container.find_all(("p", "h3", "img", "blockquote"), recursive = False):
-			CurrentTag = self.__UnwrapInnerTags(CurrentTag)
+			if CurrentTag.name == "p": CurrentTag = Functions.UnwrapInnerTags(CurrentTag)
 			Element = None
 
 			match CurrentTag.name:
 
 				case "p":
-					for CurrentParagraph in self.__SplitParagraphsByBreaks(Soup, CurrentTag):
+					for CurrentParagraph in Functions.SplitParagraph(Soup, CurrentTag):
 						Element = self.__CreateParagraphElementFromTag(CurrentParagraph, FootnotesDict)
 
 						if Element:
